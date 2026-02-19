@@ -255,11 +255,184 @@ const removeSlot = (index) => {
     const updated = { ...filledSlots.value };
     delete updated[index];
     filledSlots.value = updated;
-    // If the removed slot was actively open in the panel, close it
-    if (activeSlot.value === index) {
-        activeSlot.value = null;
-        isConfirming.value = false;
+    isConfirming.value = false;
+    // Open product selection panel for this specific slot
+    activeSlot.value = index;
+    const existing = filledSlots.value[index]; // will be undefined since we just deleted it
+    selectedCategory.value = productCategories[0];
+    selectedProduct.value = null;
+};
+
+const resetLayout = () => {
+    if (confirm('Zmiana układu usunie dodane produkty. Kontynuować?')) {
+        selectedLayoutIndex.value = null;
     }
+};
+
+// ... existing code ...
+
+// ── Packaging PDF ──────────────────────────────────────────────────────────────
+const generatePackagingPDF = () => {
+    const size = currentSize.value;
+    const layout = currentLayout.value;
+    if (!size || !layout) return;
+
+    const slots = layout.slots;
+    const slotMap = filledSlots.value;
+
+    // Aggregate products by name for the list at the bottom
+    const productCounts = {};
+    slots.forEach((_, idx) => {
+        const p = slotMap[idx];
+        if (p) {
+            if (!productCounts[p.name]) {
+                productCounts[p.name] = { name: p.name, categoryName: p.categoryName, count: 0 };
+            }
+            productCounts[p.name].count++;
+        }
+    });
+    const productList = Object.values(productCounts);
+
+    // ── A4 canvas at 96dpi: 794 × 1123 px (2× for retina sharpness) ──
+    const A4W = 794;
+    const A4H = 1123;
+    const SCALE = 2;
+    const PAD = 48;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = A4W * SCALE;
+    canvas.height = A4H * SCALE;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(SCALE, SCALE);
+
+    // White background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, A4W, A4H);
+
+    // ── Title ──
+    ctx.fillStyle = '#000000';
+    ctx.font = 'bold 22px Arial, sans-serif';
+    ctx.fillText('Instrukcja pakowania', PAD, PAD + 6);
+
+    ctx.font = '13px Arial, sans-serif';
+    ctx.fillStyle = '#555555';
+    ctx.fillText(
+        `Rozmiar: ${size.name}  (${size.label})  ·  Układ: ${currentLayouts.value[selectedLayoutIndex.value]?.name || ''}`,
+        PAD, PAD + 26
+    );
+
+    // ── Grid layout ──
+    const gridTop = PAD + 50;
+    const availW = A4W - PAD * 2;
+    const maxGridH = A4H * 0.55;
+    const rawCellSize = availW / size.width;
+    const maxCellSize = maxGridH / size.height;
+    const CELL = Math.min(rawCellSize, maxCellSize);
+    const gridW = CELL * size.width;
+    const ox = PAD + (availW - gridW) / 2;
+
+    slots.forEach((slot, idx) => {
+        const x = ox + slot.x * CELL;
+        const y = gridTop + slot.y * CELL;
+        const w = slot.w * CELL;
+        const h = slot.h * CELL;
+        const p = slotMap[idx];
+
+        // Fill
+        ctx.fillStyle = p ? '#e8e8e8' : '#f5f5f5';
+        ctx.fillRect(x, y, w, h);
+
+        // Border
+        ctx.strokeStyle = '#222222';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(x, y, w, h);
+
+        if (p) {
+            const maxFontSize = Math.min(w, h) * 0.22;
+            const fontSize = Math.max(10, Math.min(maxFontSize, 20));
+
+            // Category (smaller, above centre)
+            ctx.fillStyle = '#555555';
+            ctx.font = `${Math.max(9, fontSize * 0.7)}px Arial, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(p.categoryName, x + w / 2, y + h / 2 - fontSize * 0.75);
+
+            // Product name (bold, below category)
+            ctx.fillStyle = '#000000';
+            ctx.font = `bold ${fontSize}px Arial, sans-serif`;
+            ctx.fillText(p.name, x + w / 2, y + h / 2 + fontSize * 0.45);
+        }
+    });
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+
+    // ── Divider ──
+    const gridBottom = gridTop + size.height * CELL;
+    const divY = gridBottom + 36;
+    ctx.strokeStyle = '#cccccc';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(PAD, divY);
+    ctx.lineTo(A4W - PAD, divY);
+    ctx.stroke();
+
+    // ── Product list ──
+    ctx.fillStyle = '#000000';
+    ctx.font = 'bold 15px Arial, sans-serif';
+    ctx.fillText('Spis produktów:', PAD, divY + 24);
+
+    productList.forEach((item, i) => {
+        const ly = divY + 52 + i * 32;
+
+        // Bullet
+        ctx.fillStyle = '#222222';
+        ctx.beginPath();
+        ctx.arc(PAD + 6, ly - 5, 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Category · Name
+        ctx.fillStyle = '#111111';
+        ctx.font = '14px Arial, sans-serif';
+        ctx.fillText(`${item.categoryName} · ${item.name}`, PAD + 18, ly);
+
+        // Count (right-aligned)
+        ctx.fillStyle = '#333333';
+        ctx.font = 'bold 14px Arial, sans-serif';
+        const countText = `${item.count} szt.`;
+        const tw = ctx.measureText(countText).width;
+        ctx.fillText(countText, A4W - PAD - tw, ly);
+    });
+
+    // ── Open print window with A4 CSS ──
+    const dataUrl = canvas.toDataURL('image/png');
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Instrukcja pakowania</title>
+            <style>
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                html, body { width: 210mm; background: white; }
+                img { display: block; width: 210mm; height: auto; image-rendering: crisp-edges; }
+                @page { size: A4 portrait; margin: 0; }
+                @media print {
+                    html, body { width: 210mm; height: 297mm; }
+                    img { width: 210mm; height: 297mm; object-fit: contain; }
+                }
+            </style>
+        </head>
+        <body>
+            <img src="${dataUrl}" />
+            <script>
+                window.onload = function() { window.print(); };
+            <\/script>
+        </body>
+        </html>
+    `);
+    printWindow.document.close();
 };
 
 </script>
@@ -328,6 +501,7 @@ const removeSlot = (index) => {
       <Transition name="slide-fade">
         <div class="step-section" v-if="selectedSize !== null && activeSlot === null && !allSlotsFilled">
           <div class="section-header">
+            <button class="back-arrow-btn" @click="selectedSize = null; selectedLayoutIndex = null" title="Wróć do rozmiaru">←</button>
             <span class="section-num">2</span>
             <h3>Wybierz układ</h3>
           </div>
@@ -372,6 +546,7 @@ const removeSlot = (index) => {
       <Transition name="slide-fade">
         <div class="step-section product-list-section" v-if="allSlotsFilled && activeSlot === null">
           <div class="section-header">
+            <button class="back-arrow-btn" @click="resetLayout" title="Zmień układ">←</button>
             <span class="section-num done-num">✓</span>
             <h3>Twoje produkty</h3>
           </div>
@@ -402,6 +577,7 @@ const removeSlot = (index) => {
           <!-- Panel header -->
           <div class="product-panel-header">
             <div class="section-header">
+              <button class="back-arrow-btn" @click="closeProductPanel" title="Wróć do układu">←</button>
               <span class="section-num accent">3</span>
               <h3>Wybierz produkt</h3>
             </div>
@@ -564,7 +740,13 @@ const removeSlot = (index) => {
         <div class="total-info" v-if="currentLayout">
           Zapełnienie: {{ filledCount }} / {{ totalSlots }}
         </div>
-        <button class="close-btn" @click="showSummary = false">Zamknij</button>
+        <div class="modal-actions">
+          <button class="packaging-btn" @click="generatePackagingPDF" title="Pobierz instrukcję pakowania">
+            <span class="packaging-icon">📄</span>
+            ← Instrukcja pakowania
+          </button>
+          <button class="close-btn" @click="showSummary = false">Zamknij</button>
+        </div>
       </div>
     </div>
   </div>
@@ -594,7 +776,7 @@ const removeSlot = (index) => {
     width: 380px;
     flex-shrink: 0;
     background: white;
-    padding: 32px 28px;
+    padding: 72px 28px 32px;
     display: flex;
     flex-direction: column;
     gap: 28px;
@@ -1528,7 +1710,7 @@ const removeSlot = (index) => {
 
 .summary-btn {
     background: #111827;
-    color: white;
+    color: white !important;
     box-shadow: 0 8px 20px -5px rgba(0,0,0,0.2);
 }
 
@@ -1831,6 +2013,74 @@ const removeSlot = (index) => {
 .close-btn:hover {
     background: #e5e7eb;
     color: #111827;
+}
+
+.modal-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.packaging-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 20px;
+    background: #1f2937;
+    color: white !important;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 0.9rem;
+    font-family: 'Inter', sans-serif;
+    transition: all 0.2s;
+    letter-spacing: 0.02em;
+}
+
+.packaging-btn:hover {
+    background: #111827;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+}
+
+.packaging-icon {
+    font-size: 1rem;
+}
+
+/* Back Arrow Button */
+.back-arrow-btn {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    line-height: 1;
+    color: #9ca3af;
+    cursor: pointer;
+    padding: 4px 8px;
+    margin-right: 4px;
+    border-radius: 8px;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.back-arrow-btn:hover {
+    color: #111827;
+    background: #f3f4f6;
+    transform: translateX(-2px);
+}
+
+.section-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.section-header h3 {
+    margin: 0; /* Ensure h3 doesn't break alignment */
 }
 
 .empty-msg {
