@@ -227,6 +227,13 @@ const showSummary = ref(false);
 
 const filledCount = computed(() => Object.keys(filledSlots.value).length);
 const totalSlots = computed(() => currentLayout.value ? currentLayout.value.slots.length : 0);
+const allSlotsFilled = computed(() => currentLayout.value && filledCount.value === totalSlots.value && totalSlots.value > 0);
+
+const editSlot = (index) => {
+    activeSlot.value = index;
+    const existing = filledSlots.value[index];
+    selectedCategory.value = existing ? (productCategories.find(c => c.id === existing.categoryId) || null) : null;
+};
 </script>
 
 <template>
@@ -291,7 +298,7 @@ const totalSlots = computed(() => currentLayout.value ? currentLayout.value.slot
 
       <!-- STEP 2: Layout Selection -->
       <Transition name="slide-fade">
-        <div class="step-section" v-if="selectedSize !== null && activeSlot === null">
+        <div class="step-section" v-if="selectedSize !== null && activeSlot === null && !allSlotsFilled">
           <div class="section-header">
             <span class="section-num">2</span>
             <h3>Wybierz układ</h3>
@@ -330,6 +337,33 @@ const totalSlots = computed(() => currentLayout.value ? currentLayout.value.slot
               <p>Kliknij pole na pudełku<br>aby dodać produkt</p>
             </div>
           </Transition>
+        </div>
+      </Transition>
+
+      <!-- STEP 4: Product List (shown when all slots are filled and no slot is active) -->
+      <Transition name="slide-fade">
+        <div class="step-section product-list-section" v-if="allSlotsFilled && activeSlot === null">
+          <div class="section-header">
+            <span class="section-num done-num">✓</span>
+            <h3>Twoje produkty</h3>
+          </div>
+          <div class="products-filled-list">
+            <div
+              v-for="(slot, idx) in currentLayout.slots"
+              :key="idx"
+              class="product-list-item"
+              :style="{ '--item-color': filledSlots[idx]?.color }"
+            >
+              <div class="product-list-color" :style="{ background: filledSlots[idx]?.color }"></div>
+              <div class="product-list-info">
+                <span class="product-list-name">{{ filledSlots[idx]?.name }}</span>
+                <span class="product-list-cat">{{ filledSlots[idx]?.categoryName }}</span>
+              </div>
+              <button class="edit-slot-btn" @click="editSlot(idx)" title="Zmień produkt">
+                ZMIEŃ
+              </button>
+            </div>
+          </div>
         </div>
       </Transition>
 
@@ -834,6 +868,103 @@ const totalSlots = computed(() => currentLayout.value ? currentLayout.value.slot
     color: #1e40af;
     font-weight: 600;
     line-height: 1.4;
+}
+
+/* ============================================
+   PRODUCT LIST (Step 4 - all slots filled)
+   ============================================ */
+.product-list-section {
+    gap: 12px;
+}
+
+.done-num {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #10B981;
+    color: white;
+    font-size: 0.75rem;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.products-filled-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.product-list-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: white;
+    border: 1.5px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 10px 12px;
+    transition: border-color 0.18s, box-shadow 0.18s;
+}
+
+.product-list-item:hover {
+    border-color: var(--item-color);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--item-color) 15%, transparent);
+}
+
+.product-list-color {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.product-list-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.product-list-name {
+    font-weight: 700;
+    font-size: 0.88rem;
+    color: #111827;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.product-list-cat {
+    font-size: 0.72rem;
+    color: #9ca3af;
+    font-weight: 500;
+}
+
+.edit-slot-btn {
+    background: #f3f4f6;
+    border: none;
+    border-radius: 8px;
+    padding: 0 10px;
+    height: 32px;
+    cursor: pointer;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    color: #6b7280;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, transform 0.15s, color 0.15s;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.edit-slot-btn:hover {
+    background: #e5e7eb;
+    transform: scale(1.1);
 }
 
 /* ============================================
