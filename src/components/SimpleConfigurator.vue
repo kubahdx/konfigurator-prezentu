@@ -1511,6 +1511,7 @@ const removeSlot = (index) => {
     padding: 18px;
     border-radius: 16px;
     border: none;
+    font-family: 'Inter', sans-serif;
     font-weight: 800;
     font-size: 1rem;
     cursor: pointer;
