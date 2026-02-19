@@ -29,6 +29,8 @@ const onDragStart = (event, color, type) => {
         let dimensions = [1,1,1];
         if (type === 'brick') dimensions = [2,1,1];
         if (type === 'deep') dimensions = [1,1,2];
+        if (type === 'long') dimensions = [3,1,1];
+        if (type === 'long_deep') dimensions = [1,1,3];
         
         const data = {
             color,
@@ -134,6 +136,24 @@ const onDragStart = (event, color, type) => {
                     draggable="true"
                     @dragstart="onDragStart($event, colorObj.value, 'deep')"
                     title="Deep Box (1:1:2)"
+                ></div>
+                
+                <!-- Long -->
+                <div 
+                    class="palette-item long"
+                    :style="{ backgroundColor: colorObj.value }"
+                    draggable="true"
+                    @dragstart="onDragStart($event, colorObj.value, 'long')"
+                    title="Długi (3:1:1)"
+                ></div>
+                
+                 <!-- Long Deep -->
+                <div 
+                    class="palette-item long_deep"
+                    :style="{ backgroundColor: colorObj.value }"
+                    draggable="true"
+                    @dragstart="onDragStart($event, colorObj.value, 'long_deep')"
+                    title="Długi Głęboki (1:1:3)"
                 ></div>
             </div>
           </div>
@@ -359,6 +379,8 @@ const onDragStart = (event, color, type) => {
 .palette-item.cube { width: 36px; height: 36px; }
 .palette-item.brick { width: 72px; height: 36px; }
 .palette-item.deep { width: 36px; height: 72px; }
+.palette-item.long { width: 108px; height: 36px; }
+.palette-item.long_deep { width: 36px; height: 108px; }
 
 /* 3D Sides */
 .palette-item::before {
