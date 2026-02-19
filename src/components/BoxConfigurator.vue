@@ -12,12 +12,14 @@ const width = ref(3);
 const height = ref(1);
 const depth = ref(3);
 const containerColor = ref('#808080');
+const isClosed = ref(false); // New state for lid
 
 // Placed Objects State
 const placedObjects = ref([]);
 
 // 3D Objects
 let containerGroup = null;
+let lidGroup = null; // Reference to lid group for animation
 let objectsGroup = new THREE.Group();
 
 const floorMesh = shallowRef(null);
@@ -51,8 +53,7 @@ const createContainer = () => {
     // Left
     const left = new THREE.Mesh(sideGeo, material);
     left.position.x = -internalW / 2 - wallThickness / 2;
-    left.position.y = 0; // Centered vertically relative to scene 0? 0 is center of box height?
-                         // Current logic seems to center box at 0.
+    left.position.y = 0; 
     left.receiveShadow = true;
     group.add(left);
 
@@ -71,11 +72,74 @@ const createContainer = () => {
     back.receiveShadow = true;
     group.add(back);
 
-    // Front (Added as per open-box requirement)
+    // Front
     const front = new THREE.Mesh(fbGeo, material);
     front.position.z = internalD / 2 + wallThickness / 2;
     front.receiveShadow = true;
     group.add(front);
+
+    // --- LID IMPLEMENTATION ---
+    const lid = new THREE.Group();
+    
+    // Pivot Position: Top edge of Back wall
+    // Back wall y center is 0. Top is height/2. 
+    // Back wall z center is -internalD/2 - wallThickness/2.
+    lid.position.set(0, height.value / 2, -internalD / 2 - wallThickness / 2);
+
+    // Lid Geometry
+    // 1. Top Panel (covers the whole box opening)
+    // Should match outer dimensions
+    const lidPanelGeo = new THREE.BoxGeometry(outerW, wallThickness, outerD);
+    const lidPanel = new THREE.Mesh(lidPanelGeo, material);
+    
+    // Position relative to Pivot (0,0,0 inside lid group)
+    // When closed (rotation 0), it should stretch forward (positive Z) from the pivot.
+    // The pivot is at the back edge.
+    // So the center of the lid panel should be at z = +outerD/2 - wallThickness/2 (offset to align edge)
+    // Actually, pivot is at back wall center Z. 
+    // If we want the lid to start exactly at the back edge:
+    // Center Z of lid = outerD / 2.
+    // But we need to account for wall thickness overlaps.
+    // Let's align it so it sits flush on top.
+    
+    lidPanel.position.y = wallThickness / 2; // Sit on top of walls? Or flush? 
+    // Usually overlaps walls.
+    // Dimensions are outerW x outerD.
+    lidPanel.position.z = outerD / 2 - wallThickness / 2; 
+    lidPanel.castShadow = true;
+    lidPanel.receiveShadow = true;
+    lid.add(lidPanel);
+
+    // 2. Front Flap (Optional - characteristic of fasonowe)
+    // A small flap hanging down from the front of the lid
+    const flapHeight = height.value * 0.3; // 30% of box height
+    const flapGeo = new THREE.BoxGeometry(internalW, flapHeight, wallThickness); // Fits inside? Or outside? Usually inside for tuck-in.
+    // Let's make it tuck-in style (slightly smaller width)
+    const tuckInWidth = internalW - 0.2; 
+    const tuckInGeo = new THREE.BoxGeometry(tuckInWidth, flapHeight, wallThickness);
+    
+    const flap = new THREE.Mesh(tuckInGeo, material);
+    // Relative to pivot:
+    // Z: It's at the front edge of the lid panel.
+    // Lid panel ends at outerD (from pivot? No, pivot is back).
+    // Lid panel length is outerD.
+    // So front edge is at z = outerD - (something).
+    // Let's approximate: z = internalD + wallThickness/2 ?
+    flap.position.z = outerD - wallThickness; 
+    // Y: It hangs down.
+    flap.position.y = -flapHeight / 2 + wallThickness / 2; 
+    // Rotation: Tucked in slightly?
+    flap.rotation.x = -0.1; // Slight angle to help tuck in
+    
+    lid.add(flap);
+
+    // Initial Rotation
+    // If isClosed is true, 0. If false, open angle.
+    // We handle animation separately, but set initial state here.
+    lid.rotation.x = isClosed.value ? 0 : -Math.PI / 1.5;
+
+    group.add(lid);
+    lidGroup = lid;
 
     return group;
 };
@@ -203,6 +267,32 @@ watch([width, depth], () => {
     placedObjects.value = [];
 });
 
+// Watch Lid State for Animation
+watch(isClosed, (closed) => {
+    if (!lidGroup) return;
+    
+    const startRot = lidGroup.rotation.x;
+    const endRot = closed ? 0 : -Math.PI / 1.5;
+    const duration = 500; // ms
+    const startTime = performance.now();
+
+    const animateLid = (time) => {
+        const elapsed = time - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        
+        // Easing (ease-out-cubic)
+        const ease = 1 - Math.pow(1 - progress, 3);
+        
+        lidGroup.rotation.x = startRot + (endRot - startRot) * ease;
+        
+        if (progress < 1) {
+            requestAnimationFrame(animateLid);
+        }
+    };
+    
+    requestAnimationFrame(animateLid);
+});
+
 // Helper: Boundary Clamping & Snapping
 const getClampedPosition = (x, z, objW, objD, excludeObject = null) => {
     const wallThick = 0.1;
@@ -276,43 +366,21 @@ const getClampedPosition = (x, z, objW, objD, excludeObject = null) => {
     x = snappedX;
     z = snappedZ;
 
-    x = snappedX;
-    z = snappedZ;
-
     // 2. Wall Snapping & Clamping
     // Limits (Max valid positions)
     // Width/Depth are now INTERNAL dimensions, so we just subtract object half-size
     const xLimit = (width.value / 2) - (objW / 2);
     const zLimit = (depth.value / 2) - (objD / 2);
 
-    // Wall Snapping (Lower priority than object alignment? Or concurrent? 
-    // If we snapped to object, we might be overlapping wall.
-    // Clamping will fix overlapping. Wall snapping is for "close to wall".
-    // If we are already snapped to object, checking wall snap might override it.
-    // Let's only snap to wall if NOT snapped to object? Or just apply sequential logic.
-    // Wall snapping is usually "stronger" boundaries.
-    
-    // Only snap to wall if we haven't snapped to an object in that axis strongly?
-    // Let's keep wall snap logic simple: If close to wall, snap to wall.
-    // This might override object snap if close to both. That's acceptable.
-
+    // Wall Snapping (simple)
     // If we are close to the right wall
-    if (Math.abs(xLimit - x) < snapThreshold) {
-        x = xLimit;
-    }
+    if (Math.abs(xLimit - x) < snapThreshold) x = xLimit;
     // If we are close to the left wall
-    if (Math.abs(x - (-xLimit)) < snapThreshold) {
-        x = -xLimit;
-    }
-    
+    if (Math.abs(x - (-xLimit)) < snapThreshold) x = -xLimit;
     // If we are close to the back wall
-    if (Math.abs(zLimit - z) < snapThreshold) {
-        z = zLimit;
-    }
+    if (Math.abs(zLimit - z) < snapThreshold) z = zLimit;
     // If we are close to the front wall
-    if (Math.abs(z - (-zLimit)) < snapThreshold) {
-        z = -zLimit;
-    }
+    if (Math.abs(z - (-zLimit)) < snapThreshold) z = -zLimit;
 
     // Clamping (Ensure we never go beyond limits)
     let clampedX = Math.max(-xLimit, Math.min(xLimit, x));
@@ -353,6 +421,8 @@ const onDragOver = (event) => {
 };
 
 const onDrop = (event) => {
+    if (isClosed.value) return; // Prevent drop when closed
+    
     event.preventDefault();
     const rawData = event.dataTransfer.getData('application/json');
     if (!rawData) return;
@@ -411,6 +481,8 @@ let draggedStartPos = null;
 let isDragging = false;
 
 const onPointerDown = (event) => {
+    if (isClosed.value) return; // Prevent interaction when closed
+
     // Only handle left click
     if (event.button !== 0) return;
     
@@ -513,6 +585,11 @@ const openSummary = () => {
     showSummary.value = true;
 };
 
+// Toggle Box Open/Close
+const toggleBox = () => {
+    isClosed.value = !isClosed.value;
+};
+
 onMounted(() => {
   if (canvasContainer.value) {
     init(canvasContainer.value);
@@ -545,10 +622,18 @@ onUnmounted(() => {
       v-model:depth="depth"
     />
     
-    <!-- Summary Button -->
-    <button id="step-summary" class="summary-btn" @click="openSummary">
-        Podsumuj zamówienie
-    </button>
+    <!-- Action Buttons -->
+    <div class="actions-container">
+        <!-- Close/Open Box Button -->
+        <button class="action-btn toggle-btn" @click="toggleBox">
+            {{ isClosed ? 'Otwórz pudełko' : 'Zamknij pudełko' }}
+        </button>
+
+        <!-- Summary Button -->
+        <button id="step-summary" class="action-btn summary-btn" @click="openSummary">
+            Podsumuj zamówienie
+        </button>
+    </div>
     
     <!-- Summary Modal -->
     <div v-if="showSummary" class="modal-overlay" @click.self="showSummary = false">
@@ -586,28 +671,49 @@ onUnmounted(() => {
   display: block;
 }
 
-.summary-btn {
-  position: absolute;
-  bottom: 30px;
-  left: 50%;
-  transform: translateX(-50%);
+.actions-container {
+    position: absolute;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 20px;
+    z-index: 100;
+}
+
+.action-btn {
   padding: 15px 40px;
   font-size: 1.2rem;
   font-weight: bold;
-  background: #2563EB;
-  color: white;
   border: none;
   border-radius: 50px;
   cursor: pointer;
-  z-index: 100;
   box-shadow: 0 4px 6px rgba(0,0,0,0.3);
   transition: transform 0.2s, background 0.2s;
 }
 
-.summary-btn:hover {
-  background: #1D4ED8;
-  transform: translateX(-50%) scale(1.05);
+.action-btn:hover {
+  transform: scale(1.05);
 }
+
+.summary-btn {
+  background: #2563EB;
+  color: white;
+}
+
+.summary-btn:hover {
+    background: #1D4ED8;
+}
+
+.toggle-btn {
+    background: #10B981;
+    color: white;
+}
+
+.toggle-btn:hover {
+    background: #059669;
+}
+
 
 .modal-overlay {
   position: absolute;
@@ -691,3 +797,4 @@ onUnmounted(() => {
   to { transform: translateY(0); opacity: 1; }
 }
 </style>
+
