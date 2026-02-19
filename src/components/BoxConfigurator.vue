@@ -12,7 +12,8 @@ const width = ref(3);
 const height = ref(1);
 const depth = ref(3);
 const containerColor = ref('#808080');
-const isClosed = ref(false); // New state for lid
+const isClosed = ref(false); 
+const hasLid = ref(true); // New state: Optional Lid
 
 // Placed Objects State
 const placedObjects = ref([]);
@@ -79,67 +80,47 @@ const createContainer = () => {
     group.add(front);
 
     // --- LID IMPLEMENTATION ---
-    const lid = new THREE.Group();
-    
-    // Pivot Position: Top edge of Back wall
-    // Back wall y center is 0. Top is height/2. 
-    // Back wall z center is -internalD/2 - wallThickness/2.
-    lid.position.set(0, height.value / 2, -internalD / 2 - wallThickness / 2);
+    // Only create lid if hasLid is true
+    if (hasLid.value) {
+        const lid = new THREE.Group();
+        
+        // Pivot Position: Top edge of Back wall
+        lid.position.set(0, height.value / 2, -internalD / 2 - wallThickness / 2);
 
-    // Lid Geometry
-    // 1. Top Panel (covers the whole box opening)
-    // Should match outer dimensions
-    const lidPanelGeo = new THREE.BoxGeometry(outerW, wallThickness, outerD);
-    const lidPanel = new THREE.Mesh(lidPanelGeo, material);
-    
-    // Position relative to Pivot (0,0,0 inside lid group)
-    // When closed (rotation 0), it should stretch forward (positive Z) from the pivot.
-    // The pivot is at the back edge.
-    // So the center of the lid panel should be at z = +outerD/2 - wallThickness/2 (offset to align edge)
-    // Actually, pivot is at back wall center Z. 
-    // If we want the lid to start exactly at the back edge:
-    // Center Z of lid = outerD / 2.
-    // But we need to account for wall thickness overlaps.
-    // Let's align it so it sits flush on top.
-    
-    lidPanel.position.y = wallThickness / 2; // Sit on top of walls? Or flush? 
-    // Usually overlaps walls.
-    // Dimensions are outerW x outerD.
-    lidPanel.position.z = outerD / 2 - wallThickness / 2; 
-    lidPanel.castShadow = true;
-    lidPanel.receiveShadow = true;
-    lid.add(lidPanel);
+        // Lid Geometry
+        // 1. Top Panel
+        const lidPanelGeo = new THREE.BoxGeometry(outerW, wallThickness, outerD);
+        const lidPanel = new THREE.Mesh(lidPanelGeo, material);
+        
+        // Position relative to Pivot
+        lidPanel.position.y = wallThickness / 2; 
+        lidPanel.position.z = outerD / 2 - wallThickness / 2; 
+        lidPanel.castShadow = true;
+        lidPanel.receiveShadow = true;
+        lid.add(lidPanel);
 
-    // 2. Front Flap (Optional - characteristic of fasonowe)
-    // A small flap hanging down from the front of the lid
-    const flapHeight = height.value * 0.3; // 30% of box height
-    const flapGeo = new THREE.BoxGeometry(internalW, flapHeight, wallThickness); // Fits inside? Or outside? Usually inside for tuck-in.
-    // Let's make it tuck-in style (slightly smaller width)
-    const tuckInWidth = internalW - 0.2; 
-    const tuckInGeo = new THREE.BoxGeometry(tuckInWidth, flapHeight, wallThickness);
-    
-    const flap = new THREE.Mesh(tuckInGeo, material);
-    // Relative to pivot:
-    // Z: It's at the front edge of the lid panel.
-    // Lid panel ends at outerD (from pivot? No, pivot is back).
-    // Lid panel length is outerD.
-    // So front edge is at z = outerD - (something).
-    // Let's approximate: z = internalD + wallThickness/2 ?
-    flap.position.z = outerD - wallThickness; 
-    // Y: It hangs down.
-    flap.position.y = -flapHeight / 2 + wallThickness / 2; 
-    // Rotation: Tucked in slightly?
-    flap.rotation.x = -0.1; // Slight angle to help tuck in
-    
-    lid.add(flap);
+        // 2. Front Flap
+        const flapHeight = height.value * 0.3; 
+        // tuck-in style
+        const tuckInWidth = internalW - 0.2; 
+        const tuckInGeo = new THREE.BoxGeometry(tuckInWidth, flapHeight, wallThickness);
+        
+        const flap = new THREE.Mesh(tuckInGeo, material);
+        // Relative to pivot:
+        flap.position.z = outerD - wallThickness; 
+        flap.position.y = -flapHeight / 2 + wallThickness / 2; 
+        flap.rotation.x = -0.1; 
+        
+        lid.add(flap);
 
-    // Initial Rotation
-    // If isClosed is true, 0. If false, open angle.
-    // We handle animation separately, but set initial state here.
-    lid.rotation.x = isClosed.value ? 0 : -Math.PI / 1.5;
+        // Initial Rotation
+        lid.rotation.x = isClosed.value ? 0 : -Math.PI / 1.5;
 
-    group.add(lid);
-    lidGroup = lid;
+        group.add(lid);
+        lidGroup = lid;
+    } else {
+        lidGroup = null;
+    }
 
     return group;
 };
@@ -251,6 +232,15 @@ const updatePlacedObjects = () => {
 // Update Container when dims change
 watchEffect(() => {
     if (scene.value) {
+        // Since createContainer uses `hasLid`, we need to ensure this effect runs when hasLid changes.
+        // It does because createContainer is called, which reads `hasLid.value`? 
+        // No, createContainer reads it, but updateContainer calls createContainer.
+        // We need to make sure updateContainer is triggered when hasLid changes.
+        // But watchEffect tracks dependencies. If we access hasLid inside, it will re-run.
+        // createContainer accesses hasLid.value.
+        // So this block relies on createContainer being reactive implicitly or explicitly.
+        // Let's explicitly check hasLid here to be safe and clear.
+        const _ = hasLid.value; 
         updateContainer();
     }
 });
@@ -269,7 +259,7 @@ watch([width, depth], () => {
 
 // Watch Lid State for Animation
 watch(isClosed, (closed) => {
-    if (!lidGroup) return;
+    if (!lidGroup || !hasLid.value) return;
     
     const startRot = lidGroup.rotation.x;
     const endRot = closed ? 0 : -Math.PI / 1.5;
@@ -421,7 +411,9 @@ const onDragOver = (event) => {
 };
 
 const onDrop = (event) => {
-    if (isClosed.value) return; // Prevent drop when closed
+    // Only prevent drop if we have a lid AND it is closed. 
+    // If we don't have a lid, isClosed is irrelevant (or effectively false).
+    if (hasLid.value && isClosed.value) return; 
     
     event.preventDefault();
     const rawData = event.dataTransfer.getData('application/json');
@@ -481,7 +473,8 @@ let draggedStartPos = null;
 let isDragging = false;
 
 const onPointerDown = (event) => {
-    if (isClosed.value) return; // Prevent interaction when closed
+    // Interaction check
+    if (hasLid.value && isClosed.value) return; 
 
     // Only handle left click
     if (event.button !== 0) return;
@@ -590,6 +583,14 @@ const toggleBox = () => {
     isClosed.value = !isClosed.value;
 };
 
+const toggleLid = () => {
+    hasLid.value = !hasLid.value;
+    // When removing lid, ensure we reset closed state so we don't block interaction
+    if (!hasLid.value) {
+        isClosed.value = false;
+    }
+};
+
 onMounted(() => {
   if (canvasContainer.value) {
     init(canvasContainer.value);
@@ -624,8 +625,21 @@ onUnmounted(() => {
     
     <!-- Action Buttons -->
     <div class="actions-container">
-        <!-- Close/Open Box Button -->
-        <button class="action-btn toggle-btn" @click="toggleBox">
+        <!-- Toggle Lid Existence -->
+        <button 
+            class="action-btn toggle-lid-btn" 
+            :class="{ active: hasLid }"
+            @click="toggleLid"
+        >
+            {{ hasLid ? 'Usuń wieczko' : 'Dodaj wieczko' }}
+        </button>
+
+        <!-- Close/Open Box Button (Only if hasLid) -->
+        <button 
+            v-if="hasLid"
+            class="action-btn toggle-btn" 
+            @click="toggleBox"
+        >
             {{ isClosed ? 'Otwórz pudełko' : 'Zamknij pudełko' }}
         </button>
 
@@ -682,14 +696,15 @@ onUnmounted(() => {
 }
 
 .action-btn {
-  padding: 15px 40px;
-  font-size: 1.2rem;
+  padding: 15px 30px;
+  font-size: 1.1rem;
   font-weight: bold;
   border: none;
   border-radius: 50px;
   cursor: pointer;
   box-shadow: 0 4px 6px rgba(0,0,0,0.3);
   transition: transform 0.2s, background 0.2s;
+  white-space: nowrap;
 }
 
 .action-btn:hover {
@@ -712,6 +727,22 @@ onUnmounted(() => {
 
 .toggle-btn:hover {
     background: #059669;
+}
+
+.toggle-lid-btn {
+    background: #6B7280;
+    color: white;
+}
+
+.toggle-lid-btn:hover {
+    background: #4B5563;
+}
+
+.toggle-lid-btn.active {
+    background: #8B5CF6; /* Different color when active/removing */
+}
+.toggle-lid-btn.active:hover {
+    background: #7C3AED;
 }
 
 
