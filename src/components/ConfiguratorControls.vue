@@ -10,10 +10,26 @@ const emit = defineEmits([
 ])
 
 const colors = [
-    { name: 'Herbata', value: '#EF4444' },
-    { name: 'Kawa', value: '#3B82F6' },
-    { name: 'Orzechy', value: '#10B981' },
-    { name: 'Drażetki', value: '#F59E0B' },
+    { 
+        name: 'Herbata', 
+        value: '#6B8E6E',
+        image: 'https://img.freepik.com/darmowe-zdjecie/zblizenie-liscia-herbaty_53876-16653.jpg'
+    },
+    { 
+        name: 'Kawa', 
+        value: '#7B5B3A',
+        image: 'https://img.freepik.com/darmowe-zdjecie/ziarna-kawy-zblizenie-tekstury-brazowa-kawa-tekstura-tlo-zblizenie-ladne-tlo-dla-twoich-pomyslow_549566-534.jpg'
+    },
+    { 
+        name: 'Orzechy', 
+        value: '#A0845C',
+        image: 'https://thumbs.dreamstime.com/b/orzech-w%C5%82oski-t%C5%82o-orzech-w%C5%82oski-tekstura-grupowi-orzechy-w%C5%82oscy-na-drewnianym-bac-79904890.jpg'
+    },
+    { 
+        name: 'Drażetki', 
+        value: '#C0607A',
+        image: 'https://pliki.dlahandlu.pl/i/04/45/56/044556_r0_940.jpg'
+    },
 ];
 
 
@@ -109,7 +125,13 @@ const onDragStart = (event, color, type) => {
       
       <div id="step-products" class="palette-scroll">
           <div v-for="colorObj in colors" :key="colorObj.value" class="palette-group">
-            <span class="group-label">{{ colorObj.name }}</span>
+            <!-- Product Image Banner -->
+            <div class="product-image-banner">
+              <img :src="colorObj.image" :alt="colorObj.name" class="product-img" />
+              <div class="product-img-overlay" :style="{ backgroundColor: colorObj.value + 'CC' }">
+                <span class="group-label-overlay">{{ colorObj.name }}</span>
+              </div>
+            </div>
             <div class="palette-items">
                 <!-- Cube -->
                 <div 
@@ -341,19 +363,46 @@ const onDragStart = (event, color, type) => {
 
 .palette-group {
     background: #f9fafb;
-    padding: 12px;
     border-radius: 12px;
     border: 1px solid #f3f4f6;
+    overflow: hidden;
 }
 
-.group-label {
+/* Product image banner */
+.product-image-banner {
+    position: relative;
+    width: 100%;
+    height: 80px;
+    overflow: hidden;
+}
+
+.product-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
     display: block;
-    font-size: 0.9rem;
-    font-weight: 600;
+    transition: transform 0.4s ease;
+}
+
+.palette-group:hover .product-img {
+    transform: scale(1.05);
+}
+
+.product-img-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    padding-left: 12px;
+}
+
+.group-label-overlay {
+    font-size: 0.95rem;
+    font-weight: 700;
     text-transform: uppercase;
-    color: #374151;
-    margin-bottom: 12px;
-    letter-spacing: 0.05em;
+    color: #ffffff;
+    letter-spacing: 0.08em;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.4);
 }
 
 .palette-items {
@@ -362,6 +411,7 @@ const onDragStart = (event, color, type) => {
     justify-content: flex-start;
     align-items: center;
     perspective: 800px;
+    padding: 10px 12px 12px;
 }
 
 .palette-item {
