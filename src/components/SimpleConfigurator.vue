@@ -44,11 +44,12 @@ const productCategories = [
 ];
 
 const selectedSize = ref(null); 
-const selectedCategory = ref(null);
+const selectedCategory = ref(productCategories[0]); // default to first tab
 const selectedProduct = ref(null);
 const selectedLayoutIndex = ref(null);
 const filledSlots = ref({});
 const activeSlot = ref(null);
+const isConfirming = ref(false); // flash animation after picking a variant
 
 const sizes = {
     s: { name: 'S', width: 2, height: 2, label: '12×12 cm' },
@@ -139,7 +140,7 @@ watch(selectedSize, (newSize) => {
         selectedLayoutIndex.value = null;
         filledSlots.value = {};
         activeSlot.value = null;
-        selectedCategory.value = null;
+        selectedCategory.value = productCategories[0];
         selectedProduct.value = null;
     }
 });
@@ -148,24 +149,28 @@ watch(selectedLayoutIndex, (newLayoutIndex) => {
     if (newLayoutIndex !== null) {
         filledSlots.value = {};
         activeSlot.value = null;
-        selectedCategory.value = null;
+        selectedCategory.value = productCategories[0];
         selectedProduct.value = null;
     }
 });
 
 const onSlotClick = (index) => {
+    if (isConfirming.value) return; // block during confirm flash
     activeSlot.value = index;
-    selectedCategory.value = null;
-    
+    isConfirming.value = false;
+    // Pre-select the category that the slot already has, or default to first
     if (filledSlots.value[index]) {
-       const existing = filledSlots.value[index];
-       selectedCategory.value = productCategories.find(c => c.id === existing.categoryId) || null;
+        const existing = filledSlots.value[index];
+        selectedCategory.value = productCategories.find(c => c.id === existing.categoryId) || productCategories[0];
+    } else {
+        selectedCategory.value = productCategories[0];
     }
 };
 
 const closeProductPanel = () => {
     activeSlot.value = null;
-    selectedCategory.value = null;
+    isConfirming.value = false;
+    selectedCategory.value = productCategories[0];
     selectedProduct.value = null;
 };
 
@@ -174,36 +179,43 @@ const selectProduct = (item, category) => {
     
     const prod = { ...item, color: category.color, categoryName: category.name, categoryId: category.id };
     selectedProduct.value = prod;
+    isConfirming.value = true;
     
     filledSlots.value = { 
         ...filledSlots.value, 
         [activeSlot.value]: prod 
     };
     
-    const totalSlots = currentLayout.value.slots.length;
-    const filledCount = Object.keys(filledSlots.value).length;
+    const currentSlot = activeSlot.value;
     
-    if (filledCount === totalSlots) {
-        activeSlot.value = null;
-        selectedCategory.value = null;
-    } else {
-        // Find next empty slot automatically
-        const slots = currentLayout.value.slots;
-        let nextEmptyIndex = null;
-        for(let i = 0; i < slots.length; i++) {
-            if (!filledSlots.value[i]) {
-                nextEmptyIndex = i;
-                break;
+    // After a short flash, auto-advance to next empty slot
+    setTimeout(() => {
+        isConfirming.value = false;
+        const totalSlots = currentLayout.value.slots.length;
+        const filledCount = Object.keys(filledSlots.value).length;
+        
+        if (filledCount === totalSlots) {
+            activeSlot.value = null;
+            selectedCategory.value = productCategories[0];
+        } else {
+            // Find next empty slot
+            const slots = currentLayout.value.slots;
+            let nextEmptyIndex = null;
+            for(let i = 0; i < slots.length; i++) {
+                if (!filledSlots.value[i]) {
+                    nextEmptyIndex = i;
+                    break;
+                }
+            }
+            if (nextEmptyIndex !== null) {
+                activeSlot.value = nextEmptyIndex;
+                selectedCategory.value = productCategories[0];
+            } else {
+                activeSlot.value = null;
+                selectedCategory.value = productCategories[0];
             }
         }
-        if (nextEmptyIndex !== null) {
-            activeSlot.value = nextEmptyIndex;
-            selectedCategory.value = null;
-        } else {
-            activeSlot.value = null;
-            selectedCategory.value = null;
-        }
-    }
+    }, 700);
 };
 
 const getSlotStyle = (slot, index) => {
@@ -231,9 +243,25 @@ const allSlotsFilled = computed(() => currentLayout.value && filledCount.value =
 
 const editSlot = (index) => {
     activeSlot.value = index;
+    isConfirming.value = false;
     const existing = filledSlots.value[index];
-    selectedCategory.value = existing ? (productCategories.find(c => c.id === existing.categoryId) || null) : null;
+    // Pre-select the existing category so the tab is highlighted
+    selectedCategory.value = existing
+        ? (productCategories.find(c => c.id === existing.categoryId) || productCategories[0])
+        : productCategories[0];
 };
+
+const removeSlot = (index) => {
+    const updated = { ...filledSlots.value };
+    delete updated[index];
+    filledSlots.value = updated;
+    // If the removed slot was actively open in the panel, close it
+    if (activeSlot.value === index) {
+        activeSlot.value = null;
+        isConfirming.value = false;
+    }
+};
+
 </script>
 
 <template>
@@ -370,57 +398,79 @@ const editSlot = (index) => {
       <!-- STEP 3: Product Selection (shown when slot is active) -->
       <Transition name="slide-fade">
         <div class="step-section product-panel" v-if="activeSlot !== null">
+
+          <!-- Panel header -->
           <div class="product-panel-header">
             <div class="section-header">
               <span class="section-num accent">3</span>
               <h3>Wybierz produkt</h3>
             </div>
-            <button class="close-slot-btn" @click="closeProductPanel" title="Zamknij">✕</button>
+            <button class="close-slot-btn" @click="closeProductPanel" title="Wróć do widoku">
+              <span class="close-btn-icon">✕</span>
+              <span class="close-btn-label">Wróć</span>
+            </button>
           </div>
 
-          <div class="slot-indicator">
-            <span class="slot-dot" :style="{ background: filledSlots[activeSlot]?.color || '#3b82f6' }"></span>
-            Pole {{ activeSlot + 1 }} z {{ totalSlots }}
-          </div>
 
-          <!-- Category selection -->
-          <div v-if="!selectedCategory" class="category-cards">
+          <!-- Current selection chip -->
+          <Transition name="chip-fade">
+            <div
+              v-if="filledSlots[activeSlot] && !isConfirming"
+              class="current-selection-chip"
+              :style="{ '--chip-color': filledSlots[activeSlot].color }"
+            >
+              <span class="chip-dot" :style="{ background: filledSlots[activeSlot].color }"></span>
+              <span class="chip-text">
+                <span class="chip-cat">{{ filledSlots[activeSlot].categoryName }}</span>
+                <span class="chip-sep"> · </span>
+                <span class="chip-name">{{ filledSlots[activeSlot].name }}</span>
+              </span>
+              <span class="chip-badge">Wybrano</span>
+            </div>
+          </Transition>
+
+          <!-- Confirm flash -->
+          <Transition name="confirm-flash">
+            <div v-if="isConfirming" class="confirm-overlay">
+              <span class="confirm-icon">✓</span>
+              <span class="confirm-text">Dodano!</span>
+            </div>
+          </Transition>
+
+          <!-- Category tabs — always visible, one-click switch -->
+          <div class="category-tabs">
             <button
               v-for="cat in productCategories"
               :key="cat.id"
-              class="category-card"
-              :style="{ '--cat-color': cat.color }"
+              class="cat-tab"
+              :class="{ active: selectedCategory?.id === cat.id }"
+              :style="{ '--tab-color': cat.color }"
               @click="selectedCategory = cat"
             >
-              <div class="cat-color-bar" :style="{ background: cat.color }"></div>
-              <div class="cat-card-body">
-                <span class="cat-name">{{ cat.name }}</span>
-                <span class="cat-count">{{ cat.items.length }} warianty</span>
-              </div>
-              <span class="cat-arrow">›</span>
+              <span class="cat-tab-dot" :style="{ background: cat.color }"></span>
+              <span class="cat-tab-name">{{ cat.name }}</span>
+              <span v-if="filledSlots[activeSlot]?.categoryId === cat.id" class="cat-tab-check">✓</span>
             </button>
           </div>
 
-          <!-- Variant selection -->
-          <div v-else class="item-step">
-            <button class="back-btn" @click="selectedCategory = null">
-              ‹ {{ selectedCategory.name }}
+          <!-- Variant list for active category -->
+          <div class="variant-list" v-if="selectedCategory">
+            <button
+              v-for="item in selectedCategory.items"
+              :key="item.id"
+              class="variant-item"
+              :class="{ active: filledSlots[activeSlot]?.id === item.id }"
+              :style="{ '--var-color': selectedCategory.color }"
+              @click="selectProduct(item, selectedCategory)"
+              :disabled="isConfirming"
+            >
+              <div class="variant-color-bar" :style="{ background: selectedCategory.color }"></div>
+              <span class="variant-name">{{ item.name }}</span>
+              <span class="variant-check" v-if="filledSlots[activeSlot]?.id === item.id">✓</span>
+              <span class="variant-arrow" v-else>›</span>
             </button>
-            <div class="item-list">
-              <button
-                v-for="item in selectedCategory.items"
-                :key="item.id"
-                class="item-btn"
-                :class="{ active: filledSlots[activeSlot]?.id === item.id }"
-                :style="{ '--cat-color': selectedCategory.color }"
-                @click="selectProduct(item, selectedCategory)"
-              >
-                <div class="item-color-chip" :style="{ background: selectedCategory.color }"></div>
-                <span class="item-name">{{ item.name }}</span>
-                <span v-if="filledSlots[activeSlot]?.id === item.id" class="item-check">✓</span>
-              </button>
-            </div>
           </div>
+
         </div>
       </Transition>
 
@@ -469,6 +519,13 @@ const editSlot = (index) => {
               <span class="slot-initial">{{ filledSlots[idx].name[0].toUpperCase() }}</span>
               <span class="slot-product-name">{{ filledSlots[idx].name }}</span>
             </div>
+            <!-- Remove button, only shown on hover for filled slots -->
+            <button
+              v-if="filledSlots[idx]"
+              class="slot-remove-btn"
+              @click.stop="removeSlot(idx)"
+              title="Usuń produkt"
+            >✕</button>
           </div>
         </div>
       </div>
@@ -987,17 +1044,17 @@ const editSlot = (index) => {
 .close-slot-btn {
     background: #f3f4f6;
     border: none;
-    border-radius: 50%;
-    width: 28px;
-    height: 28px;
+    border-radius: 20px;
+    padding: 4px 10px;
     cursor: pointer;
-    font-size: 0.75rem;
-    color: #9ca3af;
+    font-size: 0.72rem;
+    color: #6b7280;
     display: flex;
     align-items: center;
-    justify-content: center;
+    gap: 4px;
     transition: all 0.15s;
     flex-shrink: 0;
+    font-weight: 600;
 }
 
 .close-slot-btn:hover {
@@ -1005,31 +1062,277 @@ const editSlot = (index) => {
     color: #374151;
 }
 
+.close-btn-icon { font-size: 0.7rem; }
+.close-btn-label { font-size: 0.72rem; }
+
+/* Slot pips row */
 .slot-indicator {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: #6b7280;
+    gap: 10px;
     padding: 8px 12px;
     background: white;
-    border-radius: 8px;
+    border-radius: 10px;
     border: 1px solid #e5e7eb;
 }
 
-.slot-dot {
+.slot-pips {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+    flex: 1;
+}
+
+.slot-pip {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #e5e7eb;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.2s;
+    border: 2px solid transparent;
+}
+
+.slot-pip.pip-active {
+    transform: scale(1.4);
+    border-color: white;
+    box-shadow: 0 0 0 1.5px currentColor;
+}
+
+.slot-pip.pip-filled {
+    opacity: 0.7;
+}
+
+.slot-pip:hover {
+    opacity: 1;
+    transform: scale(1.2);
+}
+
+.slot-label-text {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #6b7280;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* Current selection chip */
+.current-selection-chip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: color-mix(in srgb, var(--chip-color) 8%, white);
+    border: 1.5px solid color-mix(in srgb, var(--chip-color) 30%, transparent);
+    border-radius: 10px;
+    font-size: 0.82rem;
+}
+
+.chip-dot {
     width: 10px;
     height: 10px;
     border-radius: 50%;
     flex-shrink: 0;
 }
 
-/* Category Cards */
-.category-cards {
+.chip-text {
+    flex: 1;
+    font-weight: 600;
+    color: #374151;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.chip-cat { color: #6b7280; font-weight: 500; }
+.chip-sep { color: #d1d5db; }
+.chip-name { color: #1f2937; font-weight: 700; }
+
+.chip-badge {
+    background: color-mix(in srgb, var(--chip-color) 20%, transparent);
+    color: var(--chip-color);
+    font-size: 0.65rem;
+    font-weight: 800;
+    padding: 2px 7px;
+    border-radius: 20px;
+    letter-spacing: 0.03em;
+    flex-shrink: 0;
+}
+
+/* Confirm flash overlay */
+.confirm-overlay {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: linear-gradient(135deg, #d1fae5, #a7f3d0);
+    border: 1.5px solid #6ee7b7;
+    border-radius: 10px;
+    padding: 12px;
+    color: #065f46;
+    font-weight: 800;
+}
+
+.confirm-icon {
+    font-size: 1.3rem;
+    animation: popIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.confirm-text {
+    font-size: 1rem;
+    letter-spacing: 0.02em;
+}
+
+@keyframes popIn {
+    from { transform: scale(0); opacity: 0; }
+    to   { transform: scale(1); opacity: 1; }
+}
+
+/* Chip / confirm flash transitions */
+.chip-fade-enter-active, .chip-fade-leave-active { transition: all 0.25s ease; }
+.chip-fade-enter-from, .chip-fade-leave-to { opacity: 0; transform: translateY(-4px); }
+
+.confirm-flash-enter-active, .confirm-flash-leave-active { transition: all 0.3s ease; }
+.confirm-flash-enter-from { opacity: 0; transform: scale(0.9); }
+.confirm-flash-leave-to  { opacity: 0; transform: scale(1.05); }
+
+/* ============================================
+   CATEGORY TABS
+   ============================================ */
+.category-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+
+.cat-tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 10px;
+    border: 2px solid #e5e7eb;
+    border-radius: 12px;
+    background: white;
+    cursor: pointer;
+    font-size: 0.82rem;
+    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    color: #374151;
+    font-weight: 600;
+    text-align: left;
+    position: relative;
+    overflow: hidden;
+}
+
+.cat-tab:hover {
+    border-color: var(--tab-color);
+    background: color-mix(in srgb, var(--tab-color) 5%, white);
+    transform: translateY(-1px);
+}
+
+.cat-tab.active {
+    border-color: var(--tab-color);
+    background: color-mix(in srgb, var(--tab-color) 10%, white);
+    box-shadow: 0 2px 12px color-mix(in srgb, var(--tab-color) 25%, transparent);
+    color: #111827;
+}
+
+.cat-tab-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.cat-tab-name {
+    flex: 1;
+    font-size: 0.8rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cat-tab-check {
+    font-size: 0.75rem;
+    color: #10B981;
+    font-weight: 800;
+    flex-shrink: 0;
+}
+
+/* ============================================
+   VARIANT LIST
+   ============================================ */
+.variant-list {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 5px;
+}
+
+.variant-item {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    border: 1.5px solid #e5e7eb;
+    border-radius: 10px;
+    background: white;
+    cursor: pointer;
+    transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+    width: 100%;
+    text-align: left;
+    overflow: hidden;
+    padding: 0;
+}
+
+.variant-item:hover:not(:disabled) {
+    border-color: var(--var-color);
+    background: color-mix(in srgb, var(--var-color) 5%, white);
+    transform: translateX(3px);
+}
+
+.variant-item.active {
+    border-color: var(--var-color);
+    background: color-mix(in srgb, var(--var-color) 8%, white);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--var-color) 25%, transparent);
+}
+
+.variant-item:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.variant-color-bar {
+    width: 5px;
+    align-self: stretch;
+    flex-shrink: 0;
+    border-radius: 0;
+}
+
+.variant-name {
+    flex: 1;
+    font-weight: 600;
+    color: #1f2937;
+    font-size: 0.88rem;
+    padding: 12px 10px;
+}
+
+.variant-check {
+    color: var(--var-color);
+    font-weight: 800;
+    font-size: 1rem;
+    padding-right: 14px;
+}
+
+.variant-arrow {
+    font-size: 1.2rem;
+    color: #d1d5db;
+    padding-right: 12px;
+    transition: color 0.15s, transform 0.15s;
+}
+
+.variant-item:hover:not(:disabled) .variant-arrow {
+    color: var(--var-color);
+    transform: translateX(2px);
 }
 
 .category-card {
@@ -1318,6 +1621,41 @@ const editSlot = (index) => {
 .layout-slot.is-filled {
     border-style: solid;
 }
+
+/* Remove button — appears in top-right corner on slot hover */
+.slot-remove-btn {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: white;
+    color: #111827;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+    border: none;
+    font-size: 0.65rem;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transform: scale(0.7);
+    transition: opacity 0.18s ease, transform 0.18s cubic-bezier(0.34,1.56,0.64,1), background 0.15s;
+    z-index: 10;
+}
+
+.layout-slot:hover .slot-remove-btn {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.slot-remove-btn:hover {
+    background: #ef4444;
+    transform: scale(1.15);
+}
+
 
 .add-icon {
     font-size: 2rem;
